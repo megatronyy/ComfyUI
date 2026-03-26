@@ -22,10 +22,57 @@ from comfy_execution.utils import get_executing_context
 from comfy_api import feature_flags
 from app.database.db import init_db, dependencies_available
 
+def _apply_proxy_env_vars():
+    """Set proxy environment variables early so all HTTP libraries (aiohttp, requests,
+    urllib) and subprocesses (git, pip) automatically route through the proxy.
+
+    Priority: CLI args > settings file > existing environment variables.
+    """
+    import json as _json
+
+    http_proxy = args.http_proxy
+    https_proxy = args.https_proxy
+    no_proxy = args.no_proxy
+
+    # Fall back to settings file if CLI args are not provided.
+    if not http_proxy and not https_proxy:
+        user_dir = args.user_directory or os.path.join(
+            args.base_directory or os.path.dirname(os.path.realpath(__file__)), "user"
+        )
+        settings_path = os.path.join(user_dir, "default", "comfy.settings.json")
+        if os.path.isfile(settings_path):
+            try:
+                with open(settings_path, "r") as f:
+                    settings = _json.load(f)
+                http_proxy = http_proxy or settings.get("Comfy.Network.Proxy.HttpUrl") or ""
+                https_proxy = https_proxy or settings.get("Comfy.Network.Proxy.HttpsUrl") or ""
+                no_proxy = no_proxy or settings.get("Comfy.Network.Proxy.NoProxy") or ""
+            except Exception:
+                pass
+
+    if http_proxy:
+        os.environ.setdefault('HTTP_PROXY', http_proxy)
+        os.environ.setdefault('http_proxy', http_proxy)
+        # Use http_proxy for HTTPS too unless https_proxy is explicitly set
+        if not https_proxy:
+            os.environ.setdefault('HTTPS_PROXY', http_proxy)
+            os.environ.setdefault('https_proxy', http_proxy)
+        logging.info("HTTP proxy configured: %s", http_proxy)
+    if https_proxy:
+        os.environ.setdefault('HTTPS_PROXY', https_proxy)
+        os.environ.setdefault('https_proxy', https_proxy)
+        logging.info("HTTPS proxy configured: %s", https_proxy)
+    if no_proxy:
+        os.environ.setdefault('NO_PROXY', no_proxy)
+        os.environ.setdefault('no_proxy', no_proxy)
+
+
 if __name__ == "__main__":
     #NOTE: These do not do anything on core ComfyUI, they are for custom nodes.
     os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
     os.environ['DO_NOT_TRACK'] = '1'
+
+    _apply_proxy_env_vars()
 
 setup_logger(log_level=args.verbose, use_stdout=args.log_stdout)
 
